@@ -12,7 +12,7 @@ import (
     "strings"
     "runtime"       //OS tespiti icin
     "os/user"       //Username almak icin
-    "encoding/gob"  //Serialization icin
+    "encoding/gob"  //Serialization icin simple binary protocol
 )
 
 func sys_enum(){
@@ -59,16 +59,9 @@ func getsha256hash(file string) string{
     return sha
 }
 
+func scanfiles(filehashmap map[string]string){
 
-
-func main() {
-
-    sys_enum()
     
-    filehashmap := make(map[string]string)   //Dosya:Hash tipinde map olustur
-
-    var files []string
-
     root := ""
 
     if runtime.GOOS == "windows" {
@@ -93,7 +86,8 @@ func main() {
             }
         }
 
-        files = append(files, path)
+        filehashmap[path] = getsha256hash(path) //Hash map i doldur
+
         return nil
     })
 
@@ -101,61 +95,85 @@ func main() {
         panic(err)
     }
 
-    fmt.Println("Configuration Files Detected!")
-
-
-
-
- 	// create a file
- 	dataFile, err := os.Create("integerdata.gob")
-
- 	if err != nil {
- 		fmt.Println(err)
- 		os.Exit(1)
- 	}
-
-      // serialize the data
- 	dataEncoder := gob.NewEncoder(dataFile)
- 	dataEncoder.Encode(filehashmap)
-
-    dataFile.Close()
-     
-
-
-
-
-    for _, file := range files {    //Her bir dosya için dön
-
-        filehashmap[file] = getsha256hash(file) //Hash map i doldur
-
-    }
-
-for {   //Sonsuz dongu
-    
-    for k, v := range filehashmap { //Hashmapteki her file icin
-       // fmt.Printf("key[%s] value[%s]\n", k, v)
-
-       hash_of_file := getsha256hash(k)
-
-       if (strings.Compare(hash_of_file, "delete") == 0){
-            delete(filehashmap, k)
-            fmt.Print(time.Now().Format("2006-01-02 15:04:05 "))
-            fmt.Print(k)
-            fmt.Println(" Deleted!")
-       }
-
-        if (strings.Compare(hash_of_file, v) == 0){ //Yeni hash ile hashmapteki hash ayniysa
-            _ = v // v is now "used"
-        }else{
-            fmt.Print(time.Now().Format("2006-01-02 15:04:05 "))
-            fmt.Print(k)
-            fmt.Println(" Changed!")
-            filehashmap[k] = hash_of_file
-        }
-    }
-
-    time.Sleep(500 * time.Millisecond)  //500ms uyu
-
 }
+
+
+func main() {
+
+    sys_enum()
+    filehashmap := make(map[string]string)
+
+    if _, err := os.Stat("files.db"); os.IsNotExist(err) {  //Dosyayı okumaya çalış
+
+        fmt.Println("DB File Can Not Be Found.")
+            
+        scanfiles(filehashmap)
+
+        fmt.Println("Configuration Files Scanned!")
+    
+         dataFile, err := os.Create("files.db") 	// create a file
+         if err != nil {
+             fmt.Println(err)
+             os.Exit(1)
+         }
+         dataEncoder := gob.NewEncoder(dataFile)      // serialize the data
+         dataEncoder.Encode(filehashmap)
+         dataFile.Close()
+		
+	}else{
+
+        dataFile, err := os.Open("files.db")
+        if err != nil {
+            fmt.Println(err)
+            os.Exit(1)
+        }
+   
+        dataDecoder := gob.NewDecoder(dataFile)
+        err = dataDecoder.Decode(&filehashmap)
+   
+        if err != nil {
+            fmt.Println(err)
+            os.Exit(1)
+        }
+   
+        dataFile.Close()
+   
+        fmt.Println(filehashmap)  //Print recover file
+
+        fmt.Println("DB File Found and recovered")
+
+    }
+
+
+
+
+    for {   //Sonsuz dongu
+        
+        for k, v := range filehashmap { //Hashmapteki her file icin
+        // fmt.Printf("key[%s] value[%s]\n", k, v)
+
+        hash_of_file := getsha256hash(k)
+
+        if (strings.Compare(hash_of_file, "delete") == 0){
+                delete(filehashmap, k)
+                fmt.Print(time.Now().Format("2006-01-02 15:04:05 "))
+                fmt.Print(k)
+                fmt.Println(" Deleted!")
+        }
+
+            if (strings.Compare(hash_of_file, v) == 0){ //Yeni hash ile hashmapteki hash ayniysa
+                _ = v // v is now "used"
+            }else{
+                fmt.Print(time.Now().Format("2006-01-02 15:04:05 "))
+                fmt.Print(k)
+                fmt.Println(" Changed!")
+                filehashmap[k] = hash_of_file
+            }
+        }
+
+        time.Sleep(500 * time.Millisecond)  //500ms uyu
+
+    }
+
 
 }
