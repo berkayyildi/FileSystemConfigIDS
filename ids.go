@@ -1,23 +1,33 @@
 package main
 
 import (
-    "fmt"
-    "os"
+    "fmt"           //Standart kütüphane
+    "os"            //OS islemleri icin
     "path/filepath" //Dir scan icin
     "crypto/sha256" //Sifreleme icin
     "encoding/hex"  //hex Cevirme icin
     "crypto/hmac"   //Hmac support
     "time"          //Sleep icin
-    "io/ioutil"
-    "strings"
+    "io/ioutil"     //Readfile icin
+    "io"            //Dosya islemleri
+    "strings"       //String comparison icin
     "runtime"       //OS tespiti icin
     "os/user"       //Username almak icin
     "encoding/gob"  //Serialization icin simple binary protocol
+    "crypto/aes"    //AES kutuphanesi
+    "crypto/cipher"
+    "crypto/rand"
+
+    "log"
+    "errors"
+    "encoding/base64"
+    "bytes"         //Save etmeden once buffera al aes encript yap oyle yaz
+
 )
 
 func sys_enum(){
 
-    if runtime.GOOS == "windows" {
+    if runtime.GOOS == "windows" {     //Windows ise Windows klasorune yazabiliyo mu
         fmt.Println("You are running on Windows")
         
         w, uacerr := os.Create("C:\\Windows\\uactest.txt")
@@ -28,8 +38,8 @@ func sys_enum(){
         defer w.Close()
 
 
-    } else {
-        fmt.Println("You are running on an OS other than Windows")  //Linux
+    } else if runtime.GOOS == "linux" {     //Linux ise uid 0 mı
+        fmt.Println("You are running on Linux")  //Linux
 
         user, err := user.Current()
         if err != nil {
@@ -40,6 +50,8 @@ func sys_enum(){
             fmt.Println("***********************************\nYou may not have admin privilages!\n***********************************")
         }
         
+    }else{
+        fmt.Println("Your OS does not supported!")  //Linux
     }
 
 }
@@ -61,7 +73,6 @@ func getsha256hash(file string) string{
 
 func scanfiles(filehashmap map[string]string){
 
-    
     root := ""
 
     if runtime.GOOS == "windows" {
@@ -97,53 +108,116 @@ func scanfiles(filehashmap map[string]string){
 
 }
 
+func save(filehashmap map[string]string){
+
+
+    cache_bytes := new(bytes.Buffer)                // Bos buffer ac
+    dataEncoder := gob.NewEncoder(cache_bytes)      // serializer olustur
+    dataEncoder.Encode(filehashmap)                 // Serialize the data
+
+    readBuf, _ := ioutil.ReadAll(cache_bytes)      // cannot use buffer (type *bytes.Buffer) as type []byte in argument to w.Write covertion
+    sifrelibuf, enc_err := encrypt(key, readBuf)   // Aes ile sifrele
+
+    if enc_err != nil {
+        log.Fatal(enc_err)
+    }
+
+    file, opn_err := os.OpenFile(dbname, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0666)
+     if opn_err != nil {
+        log.Fatal(opn_err)
+     }
+     defer file.Close()
+
+     _, wrt_err := file.Write(sifrelibuf)     //Byte lari dosyaya yaz
+     if wrt_err != nil {
+        log.Fatal(wrt_err)
+     }
+
+
+}
+
+func recover(filehashmap map[string]string){
+
+    enc_bin_data, err := ioutil.ReadFile(dbname) // b has type []byte
+    if err != nil {
+        log.Fatal(err)
+    }
+
+
+    cozulmusbuf, dec_err := decrypt(key, enc_bin_data)   // Aes ile sifrele
+
+    if dec_err != nil {
+        log.Fatal(dec_err)
+    }
+
+    b := bytes.NewBuffer(cozulmusbuf)
+
+    dataDecoder := gob.NewDecoder(b)
+    err = dataDecoder.Decode(&filehashmap)
+
+}
+
+
+func encrypt(key, text []byte) ([]byte, error) {
+    block, err := aes.NewCipher(key)
+    if err != nil {
+        return nil, err
+    }
+    b := base64.StdEncoding.EncodeToString(text)
+    ciphertext := make([]byte, aes.BlockSize+len(b))
+    iv := ciphertext[:aes.BlockSize]
+    if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+        return nil, err
+    }
+    cfb := cipher.NewCFBEncrypter(block, iv)
+    cfb.XORKeyStream(ciphertext[aes.BlockSize:], []byte(b))
+    return ciphertext, nil
+}
+
+func decrypt(key, text []byte) ([]byte, error) {
+    block, err := aes.NewCipher(key)
+    if err != nil {
+        return nil, err
+    }
+    if len(text) < aes.BlockSize {
+        return nil, errors.New("ciphertext too short")
+    }
+    iv := text[:aes.BlockSize]
+    text = text[aes.BlockSize:]
+    cfb := cipher.NewCFBDecrypter(block, iv)
+    cfb.XORKeyStream(text, text)
+    data, err := base64.StdEncoding.DecodeString(string(text))
+    if err != nil {
+        return nil, err
+    }
+    return data, nil
+}
+
+
+
+var dbname = "files.db"
+var key = []byte("securityprojectaesencriptionkey!")
 
 func main() {
 
     sys_enum()
+
     filehashmap := make(map[string]string)
 
-    if _, err := os.Stat("files.db"); os.IsNotExist(err) {  //Dosyayı okumaya çalış
+    if _, err := os.Stat(dbname); os.IsNotExist(err) {  //Dosyayı okumaya çalış
 
         fmt.Println("DB File Can Not Be Found.")
-            
         scanfiles(filehashmap)
-
         fmt.Println("Configuration Files Scanned!")
-    
-         dataFile, err := os.Create("files.db") 	// create a file
-         if err != nil {
-             fmt.Println(err)
-             os.Exit(1)
-         }
-         dataEncoder := gob.NewEncoder(dataFile)      // serialize the data
-         dataEncoder.Encode(filehashmap)
-         dataFile.Close()
+        save(filehashmap)   //İlk çalıştırmadan sonra save al
 		
 	}else{
 
-        dataFile, err := os.Open("files.db")
-        if err != nil {
-            fmt.Println(err)
-            os.Exit(1)
-        }
-   
-        dataDecoder := gob.NewDecoder(dataFile)
-        err = dataDecoder.Decode(&filehashmap)
-   
-        if err != nil {
-            fmt.Println(err)
-            os.Exit(1)
-        }
-   
-        dataFile.Close()
-   
-        fmt.Println(filehashmap)  //Print recover file
-
+        recover(filehashmap)
+        fmt.Println(filehashmap)  //Print recover file to debug
         fmt.Println("DB File Found and recovered")
 
     }
-
 
 
 
@@ -159,18 +233,20 @@ func main() {
                 fmt.Print(time.Now().Format("2006-01-02 15:04:05 "))
                 fmt.Print(k)
                 fmt.Println(" Deleted!")
+                save(filehashmap)   //Dosyaya da save et
         }
 
-            if (strings.Compare(hash_of_file, v) == 0){ //Yeni hash ile hashmapteki hash ayniysa
+        if (strings.Compare(hash_of_file, v) == 0){ //Yeni hash ile hashmapteki hash ayniysa
                 _ = v // v is now "used"
             }else{
                 fmt.Print(time.Now().Format("2006-01-02 15:04:05 "))
                 fmt.Print(k)
                 fmt.Println(" Changed!")
                 filehashmap[k] = hash_of_file
+                save(filehashmap)   //Dosyaya da save et
             }
         }
-
+        
         time.Sleep(500 * time.Millisecond)  //500ms uyu
 
     }
