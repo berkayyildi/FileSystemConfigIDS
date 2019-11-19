@@ -17,10 +17,8 @@ import (
     "crypto/aes"    //AES kutuphanesi
     "crypto/cipher"
     "crypto/rand"
-
     "log"
     "errors"
-    "encoding/base64"
     "bytes"         //Save etmeden once buffera al aes encript yap oyle yaz
 
 )
@@ -110,7 +108,6 @@ func scanfiles(filehashmap map[string]string){
 
 func save(filehashmap map[string]string){
 
-
     cache_bytes := new(bytes.Buffer)                // Bos buffer ac
     dataEncoder := gob.NewEncoder(cache_bytes)      // serializer olustur
     dataEncoder.Encode(filehashmap)                 // Serialize the data
@@ -134,9 +131,33 @@ func save(filehashmap map[string]string){
      }
 
 
+     
+
+    file2, opn_err := os.OpenFile("dbcheck", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0666)
+    if opn_err != nil {
+       log.Fatal(opn_err)
+    }
+    defer file.Close()
+
+    _, wrt_err2 := file2.Write([]byte(getsha256hash(dbname)))     //Byte lari dosyaya yaz
+    if wrt_err2 != nil {
+       log.Fatal(wrt_err2)
+    }
+
+
 }
 
 func recover(filehashmap map[string]string){
+
+    datach, err2 := ioutil.ReadFile("dbcheck")
+    if err2 != nil {
+        fmt.Println("File reading error: ", err2)
+    }
+    
+    saaadatach := string(datach[:])
+    if (        strings.Compare(saaadatach, getsha256hash(dbname)) != 0        ){
+        log.Fatal("DB Checksum Error! ")
+    }
 
     enc_bin_data, err := ioutil.ReadFile(dbname) // b has type []byte
     if err != nil {
@@ -153,7 +174,12 @@ func recover(filehashmap map[string]string){
     b := bytes.NewBuffer(cozulmusbuf)
 
     dataDecoder := gob.NewDecoder(b)
-    err = dataDecoder.Decode(&filehashmap)
+    decser_err := dataDecoder.Decode(&filehashmap)
+
+    if decser_err != nil {  //Eğer dosyada değişiklik olursa decode edemiyceh tata vericek
+        log.Println("Database Corrupt!")
+        log.Fatal(decser_err)
+    }
 
 }
 
@@ -163,14 +189,14 @@ func encrypt(key, text []byte) ([]byte, error) {
     if err != nil {
         return nil, err
     }
-    b := base64.StdEncoding.EncodeToString(text)
-    ciphertext := make([]byte, aes.BlockSize+len(b))
+
+    ciphertext := make([]byte, aes.BlockSize+len(text))
     iv := ciphertext[:aes.BlockSize]
     if _, err := io.ReadFull(rand.Reader, iv); err != nil {
         return nil, err
     }
     cfb := cipher.NewCFBEncrypter(block, iv)
-    cfb.XORKeyStream(ciphertext[aes.BlockSize:], []byte(b))
+    cfb.XORKeyStream(ciphertext[aes.BlockSize:], []byte(text))
     return ciphertext, nil
 }
 
@@ -186,20 +212,24 @@ func decrypt(key, text []byte) ([]byte, error) {
     text = text[aes.BlockSize:]
     cfb := cipher.NewCFBDecrypter(block, iv)
     cfb.XORKeyStream(text, text)
-    data, err := base64.StdEncoding.DecodeString(string(text))
-    if err != nil {
-        return nil, err
-    }
-    return data, nil
+
+    return text, nil
 }
 
 
 
 var dbname = "files.db"
-var key = []byte("securityprojectaesencriptionkey!")
+
+var key  []byte //Global key degiskeni yarat
 
 func main() {
 
+    s := "76606670776c717c75776a6f606671646076606b66776c75716c6a6b6e607c24" //DB Encription key HEX and XOR ed with 5
+    key, _ = hex.DecodeString(s)
+    for i, b := range key {
+        key[i] = b^5  // xor b on element of random
+    }   //fmt.Printf("%s\n", key)
+    
     sys_enum()
 
     filehashmap := make(map[string]string)
@@ -216,7 +246,7 @@ func main() {
         recover(filehashmap)
         fmt.Println(filehashmap)  //Print recover file to debug
         fmt.Println("DB File Found and recovered")
-
+        //Save etme zaten ayni sey
     }
 
 
