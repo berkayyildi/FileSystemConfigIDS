@@ -1,5 +1,7 @@
 name: build
 
+GOPATH=$HOME/go
+
 on:
   pull_request:
   push:
